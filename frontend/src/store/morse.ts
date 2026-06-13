@@ -1,7 +1,7 @@
 import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
 import { MORSE_TABLE, REVERSE_TABLE, textToMorse, morseToText } from '../utils/morse-code'
-import type { TrainMode, HistoryEntry } from '../types'
+import type { TrainMode, HistoryEntry, ExamQuestion, ExamResult, ExamStatus } from '../types'
 
 export const useMorseStore = defineStore('morse', () => {
   const inputText = ref('')
@@ -18,6 +18,16 @@ export const useMorseStore = defineStore('morse', () => {
   const isPlaying = ref(false)
   let audioCtx: AudioContext | null = null
   let currentOscillator: OscillatorNode | null = null
+
+  const examStatus = ref<ExamStatus>('idle')
+  const examQuestions = ref<ExamQuestion[]>([])
+  const examCurrentIndex = ref(0)
+  const examTimeLimit = ref(60)
+  const examStartTime = ref(0)
+  const examRemainingTime = ref(0)
+  const examResult = ref<ExamResult | null>(null)
+  const examShowAnswer = ref(false)
+  let examTimer: number | null = null
 
   const dotDuration = computed(() => 1200 / wpm.value)
 
@@ -90,10 +100,134 @@ export const useMorseStore = defineStore('morse', () => {
     history.value = []
   }
 
+  function generateExamQuestions(count: number): ExamQuestion[] {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+    const questions: ExamQuestion[] = []
+    for (let i = 0; i < count; i++) {
+      const char = chars[Math.floor(Math.random() * chars.length)]
+      questions.push({
+        id: Date.now() + i,
+        char,
+        userAnswer: '',
+        correct: false,
+        timestamp: 0,
+      })
+    }
+    return questions
+  }
+
+  function startExam(questionCount: number = 20) {
+    examQuestions.value = generateExamQuestions(questionCount)
+    examCurrentIndex.value = 0
+    examStartTime.value = Date.now()
+    examRemainingTime.value = examTimeLimit.value
+    examResult.value = null
+    examShowAnswer.value = false
+    examStatus.value = 'answering'
+    startExamTimer()
+  }
+
+  function startExamTimer() {
+    if (examTimer) clearInterval(examTimer)
+    examTimer = window.setInterval(() => {
+      if (examStatus.value !== 'answering') return
+      const elapsed = Math.floor((Date.now() - examStartTime.value) / 1000)
+      examRemainingTime.value = Math.max(0, examTimeLimit.value - elapsed)
+      if (examRemainingTime.value <= 0) {
+        submitExam()
+      }
+    }, 1000)
+  }
+
+  function setExamAnswer(answer: string) {
+    if (examCurrentIndex.value < examQuestions.value.length) {
+      examQuestions.value[examCurrentIndex.value].userAnswer = answer
+    }
+  }
+
+  function getExamCurrentQuestion(): ExamQuestion | null {
+    if (examCurrentIndex.value < examQuestions.value.length) {
+      return examQuestions.value[examCurrentIndex.value]
+    }
+    return null
+  }
+
+  async function playCurrentExamQuestion() {
+    const q = getExamCurrentQuestion()
+    if (q && !isPlaying.value) {
+      examStatus.value = 'playing'
+      await playMorse(MORSE_TABLE[q.char])
+      if (examStatus.value === 'playing') {
+        examStatus.value = 'answering'
+      }
+    }
+  }
+
+  function nextExamQuestion() {
+    if (examCurrentIndex.value < examQuestions.value.length - 1) {
+      examCurrentIndex.value++
+      examShowAnswer.value = false
+    }
+  }
+
+  function prevExamQuestion() {
+    if (examCurrentIndex.value > 0) {
+      examCurrentIndex.value--
+      examShowAnswer.value = false
+    }
+  }
+
+  function submitExam() {
+    if (examTimer) {
+      clearInterval(examTimer)
+      examTimer = null
+    }
+    const duration = Math.floor((Date.now() - examStartTime.value) / 1000)
+    let correct = 0
+    const questions = examQuestions.value.map(q => {
+      const isCorrect = q.userAnswer.trim() === MORSE_TABLE[q.char]
+      if (isCorrect) correct++
+      return { ...q, correct: isCorrect }
+    })
+    examResult.value = {
+      total: questions.length,
+      correct,
+      wrong: questions.length - correct,
+      score: questions.length > 0 ? Math.round((correct / questions.length) * 100) : 0,
+      duration,
+      questions,
+    }
+    examStatus.value = 'finished'
+  }
+
+  function resetExam() {
+    if (examTimer) {
+      clearInterval(examTimer)
+      examTimer = null
+    }
+    examStatus.value = 'idle'
+    examQuestions.value = []
+    examCurrentIndex.value = 0
+    examStartTime.value = 0
+    examRemainingTime.value = 0
+    examResult.value = null
+    examShowAnswer.value = false
+  }
+
+  function getWrongQuestions(): ExamQuestion[] {
+    if (!examResult.value) return []
+    return examResult.value.questions.filter(q => !q.correct)
+  }
+
   return {
     inputText, morseOutput, decodedText, wpm, frequency, volume,
     trainMode, history, quizChar, userAnswer, score, isPlaying,
     dotDuration, encode, decode, playMorse, playTone,
-    generateQuiz, checkAnswer, resetScore
+    generateQuiz, checkAnswer, resetScore,
+    examStatus, examQuestions, examCurrentIndex, examTimeLimit,
+    examRemainingTime, examResult, examShowAnswer,
+    startExam, setExamAnswer, getExamCurrentQuestion,
+    playCurrentExamQuestion, nextExamQuestion, prevExamQuestion,
+    submitExam, resetExam, getWrongQuestions
   }
 })
