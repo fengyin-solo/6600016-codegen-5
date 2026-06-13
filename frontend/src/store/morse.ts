@@ -1,4 +1,4 @@
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { defineStore } from 'pinia'
 import { MORSE_TABLE, REVERSE_TABLE, textToMorse, morseToText } from '../utils/morse-code'
 import type { TrainMode, HistoryEntry, ExamQuestion, ExamResult, ExamStatus } from '../types'
@@ -28,6 +28,8 @@ export const useMorseStore = defineStore('morse', () => {
   const examResult = ref<ExamResult | null>(null)
   const examShowAnswer = ref(false)
   let examTimer: number | null = null
+
+  const EXAM_STORAGE_KEY = 'morse_exam_state'
 
   const dotDuration = computed(() => 1200 / wpm.value)
 
@@ -219,6 +221,86 @@ export const useMorseStore = defineStore('morse', () => {
     return examResult.value.questions.filter(q => !q.correct)
   }
 
+  function saveExamState() {
+    if (examStatus.value === 'idle' || examStatus.value === 'finished') return
+    try {
+      const state = {
+        status: examStatus.value,
+        questions: examQuestions.value,
+        currentIndex: examCurrentIndex.value,
+        timeLimit: examTimeLimit.value,
+        startTime: examStartTime.value,
+      }
+      localStorage.setItem(EXAM_STORAGE_KEY, JSON.stringify(state))
+    } catch (e) {
+      console.warn('Failed to save exam state:', e)
+    }
+  }
+
+  function clearExamStorage() {
+    try {
+      localStorage.removeItem(EXAM_STORAGE_KEY)
+    } catch (e) {
+      console.warn('Failed to clear exam storage:', e)
+    }
+  }
+
+  function hasSavedExam(): boolean {
+    try {
+      const raw = localStorage.getItem(EXAM_STORAGE_KEY)
+      if (!raw) return false
+      const state = JSON.parse(raw)
+      const elapsed = Math.floor((Date.now() - state.startTime) / 1000)
+      return state.status === 'answering' || state.status === 'playing'
+        && elapsed < state.timeLimit
+    } catch {
+      return false
+    }
+  }
+
+  function resumeExam(): boolean {
+    try {
+      const raw = localStorage.getItem(EXAM_STORAGE_KEY)
+      if (!raw) return false
+      const state = JSON.parse(raw)
+      const elapsed = Math.floor((Date.now() - state.startTime) / 1000)
+      if (elapsed >= state.timeLimit) {
+        clearExamStorage()
+        return false
+      }
+      examQuestions.value = state.questions
+      examCurrentIndex.value = state.currentIndex
+      examTimeLimit.value = state.timeLimit
+      examStartTime.value = state.startTime
+      examRemainingTime.value = Math.max(0, state.timeLimit - elapsed)
+      examStatus.value = 'answering'
+      examResult.value = null
+      examShowAnswer.value = false
+      startExamTimer()
+      return true
+    } catch (e) {
+      console.warn('Failed to resume exam:', e)
+      return false
+    }
+  }
+
+  watch(
+    () => [examStatus.value, examCurrentIndex.value, examQuestions.value],
+    () => {
+      saveExamState()
+    },
+    { deep: true }
+  )
+
+  watch(
+    () => examStatus.value,
+    (status) => {
+      if (status === 'finished' || status === 'idle') {
+        clearExamStorage()
+      }
+    }
+  )
+
   return {
     inputText, morseOutput, decodedText, wpm, frequency, volume,
     trainMode, history, quizChar, userAnswer, score, isPlaying,
@@ -228,6 +310,7 @@ export const useMorseStore = defineStore('morse', () => {
     examRemainingTime, examResult, examShowAnswer,
     startExam, setExamAnswer, getExamCurrentQuestion,
     playCurrentExamQuestion, nextExamQuestion, prevExamQuestion,
-    submitExam, resetExam, getWrongQuestions
+    submitExam, resetExam, getWrongQuestions,
+    hasSavedExam, resumeExam, saveExamState
   }
 })

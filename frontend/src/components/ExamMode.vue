@@ -5,7 +5,26 @@
       <h3 class="text-amber-300 font-bold text-xl mb-4 text-center">考试模式</h3>
       <p class="text-gray-400 text-center mb-6">限时听音写码，交卷后查看成绩和错题</p>
 
-      <div class="grid grid-cols-2 gap-4 max-w-md mx-auto mb-6">
+      <!-- Resume Exam Prompt -->
+      <div v-if="hasSavedExam" class="bg-amber-900/30 border border-amber-600 rounded-lg p-4 mb-6 max-w-md mx-auto">
+        <div class="flex items-start gap-3">
+          <span class="text-2xl">⚠️</span>
+          <div class="flex-1">
+            <p class="text-amber-300 font-medium mb-1">检测到未完成的考试</p>
+            <p class="text-gray-400 text-sm mb-3">是否继续上次的考试？进度和答案已自动保存。</p>
+            <div class="flex gap-2">
+              <button @click="handleResumeExam" class="flex-1 bg-amber-500 text-black px-4 py-2 rounded font-medium hover:bg-amber-400">
+                继续考试
+              </button>
+              <button @click="handleDiscardSaved" class="flex-1 bg-gray-700 px-4 py-2 rounded hover:bg-gray-600">
+                重新开始
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div v-show="!hasSavedExam || showNewExamForm" class="grid grid-cols-2 gap-4 max-w-md mx-auto mb-6">
         <div>
           <label class="text-gray-400 text-sm block mb-1">题目数量</label>
           <select v-model.number="questionCount" class="w-full bg-gray-800 rounded px-3 py-2">
@@ -27,7 +46,7 @@
       </div>
 
       <div class="text-center">
-        <button @click="handleStartExam" class="bg-amber-500 text-black px-8 py-3 rounded-lg text-lg font-bold hover:bg-amber-400">
+        <button v-show="!hasSavedExam || showNewExamForm" @click="handleStartExam" class="bg-amber-500 text-black px-8 py-3 rounded-lg text-lg font-bold hover:bg-amber-400">
           开始考试
         </button>
       </div>
@@ -178,7 +197,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick } from 'vue'
+import { ref, computed, watch, nextTick, onMounted } from 'vue'
 import { useMorseStore } from '../store/morse'
 import { MORSE_TABLE } from '../utils/morse-code'
 
@@ -187,6 +206,12 @@ const store = useMorseStore()
 const questionCount = ref(20)
 const timeLimit = ref(120)
 const answerInput = ref<HTMLInputElement | null>(null)
+const showNewExamForm = ref(false)
+const hasSavedExam = ref(false)
+
+function refreshSavedExamStatus() {
+  hasSavedExam.value = store.hasSavedExam()
+}
 
 const currentAnswer = computed(() => {
   const q = store.getExamCurrentQuestion()
@@ -212,6 +237,19 @@ function handleStartExam() {
   nextTick(() => {
     answerInput.value?.focus()
   })
+}
+
+function handleResumeExam() {
+  const success = store.resumeExam()
+  if (success) {
+    nextTick(() => {
+      answerInput.value?.focus()
+    })
+  }
+}
+
+function handleDiscardSaved() {
+  showNewExamForm.value = true
 }
 
 function handleAnswerInput(e: Event) {
@@ -260,5 +298,13 @@ watch(() => store.examStatus, (status) => {
       answerInput.value?.focus()
     })
   }
+  if (status === 'idle') {
+    refreshSavedExamStatus()
+    showNewExamForm.value = false
+  }
+})
+
+onMounted(() => {
+  refreshSavedExamStatus()
 })
 </script>
